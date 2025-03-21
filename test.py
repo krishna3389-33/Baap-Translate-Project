@@ -4,13 +4,35 @@ from langdetect import detect
 from deep_translator import GoogleTranslator
 import speech_recognition as sr
 import threading
+import time
 
 # Global variables
 dark_mode = False
 recognizer = sr.Recognizer()
 recognizer.dynamic_energy_threshold = True
 recognizer.energy_threshold = 300
+translate_timer = None
+delay_time = 0.3  # Reduced delay time from 1.0 to 0.3 seconds
 
+def suggest_language(text):
+    try:
+        if not text.strip():
+            return "Auto-detect"
+        detected = detect(text)
+        # Convert language code to full name
+        for lang_name, lang_code in lang_dict.items():
+            if lang_code == detected:
+                return lang_name
+        return "Auto-detect"
+    except:
+        return "Auto-detect"
+
+def update_source_language():
+    text = input_text.get("1.0", END).strip()
+    if text:
+        suggested_lang = suggest_language(text)
+        src_lang.set(suggested_lang)
+        translate_text_live()
 
 def recognize_speech():
     try:
@@ -49,15 +71,22 @@ def translate_text_live(event=None):
         output_text.config(state=DISABLED)
         return
     
-    src_code = detect(text)
+    src_code = lang_dict.get(src_lang.get(), "auto")
     dest_code = lang_dict.get(dest_lang.get(), "en")
     
     try:
-        translated_text = GoogleTranslator(source=src_code, target=dest_code).translate(text)
-        output_text.config(state=NORMAL)
-        output_text.delete("1.0", END)
-        output_text.insert(END, translated_text)
-        output_text.config(state=DISABLED)
+        # Use a separate thread for translation to prevent UI freezing
+        def translate():
+            try:
+                translated_text = GoogleTranslator(source=src_code, target=dest_code).translate(text)
+                output_text.config(state=NORMAL)
+                output_text.delete("1.0", END)
+                output_text.insert(END, translated_text)
+                output_text.config(state=DISABLED)
+            except Exception as e:
+                messagebox.showerror("Translation Error", str(e))
+        
+        threading.Thread(target=translate, daemon=True).start()
     except Exception as e:
         messagebox.showerror("Translation Error", str(e))
 
@@ -91,6 +120,29 @@ def clear_text():
     output_text.config(state=DISABLED)
 
 
+def delayed_translation():
+    global translate_timer
+    if translate_timer:
+        translate_timer.cancel()
+    translate_timer = threading.Timer(delay_time, update_source_language)
+    translate_timer.start()
+
+
+def on_text_change(event=None):
+    delayed_translation()
+
+
+def filter_languages(event=None):
+    search_text = event.widget.get().lower()
+    # Filter languages based on input
+    filtered_langs = [lang for lang in lang_dict.keys() if search_text in lang.lower()]
+    # Update dropdown values
+    event.widget['values'] = filtered_langs
+    # Keep dropdown open while typing
+    if search_text:
+        event.widget.event_generate('<Down>')
+
+
 root = Tk()
 root.title("Google Translate Clone")
 root.geometry("950x550")
@@ -109,7 +161,7 @@ frame.pack(pady=10)
 Label(frame, text="Input Text:", font=("Arial", 12), bg="#FFFFFF", fg="black").grid(row=0, column=0, sticky=W)
 input_text = Text(frame, height=10, width=50, font=("Arial", 12), bg="#FFFFFF", fg="black")
 input_text.grid(row=1, column=0, padx=10, pady=10)
-input_text.bind("<KeyRelease>", translate_text_live)
+input_text.bind("<KeyRelease>", on_text_change)
 
 Label(frame, text="Translated Text:", font=("Arial", 12), bg="#FFFFFF", fg="black").grid(row=0, column=1, sticky=W)
 output_text = Text(frame, height=10, width=50, font=("Arial", 12), bg="#FFFFFF", fg="black", state='disabled')
@@ -120,12 +172,16 @@ src_lang.set("Auto-detect")
 Label(frame, text="From:", font=("Arial", 12), bg="#FFFFFF", fg="black").grid(row=2, column=0, pady=5, sticky=W)
 src_dropdown = ttk.Combobox(frame, values=list(lang_dict.keys()), textvariable=src_lang, font=("Arial", 12))
 src_dropdown.grid(row=2, column=0, padx=10)
+src_dropdown.bind("<<ComboboxSelected>>", translate_text_live)
+src_dropdown.bind('<KeyRelease>', filter_languages)
 
 dest_lang = StringVar()
 dest_lang.set("English")
 Label(frame, text="To:", font=("Arial", 12), bg="#FFFFFF", fg="black").grid(row=2, column=1, pady=5, sticky=W)
 dest_dropdown = ttk.Combobox(frame, values=list(lang_dict.keys()), textvariable=dest_lang, font=("Arial", 12))
 dest_dropdown.grid(row=2, column=1, padx=10)
+dest_dropdown.bind("<<ComboboxSelected>>", translate_text_live)
+dest_dropdown.bind('<KeyRelease>', filter_languages)
 
 button_frame = Frame(root, bg="#FFFFFF")
 button_frame.pack(pady=10)
